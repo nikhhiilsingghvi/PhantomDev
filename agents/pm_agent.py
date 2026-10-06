@@ -80,19 +80,21 @@ def build_pm_agent(llm_config: dict, state: TaskState) -> PhantomBaseAgent:
         if reply:
             text = normalize_content(reply)
             if text.strip():
-                _parse_and_persist(text, state)
+                success, err = _parse_and_persist(text, state)
+                if not success:
+                    return f"VALIDATION_FAILED: {err}\nPlease fix your response and try again."
         return reply
 
     agent.generate_reply = generate_with_persistence
     return agent
 
 
-def _parse_and_persist(reply: str, state: TaskState) -> None:
+def _parse_and_persist(reply: str, state: TaskState) -> tuple[bool, str]:
     """Extract JSON from PM Agent reply and write into TaskState."""
     match = re.search(r"```json\s*(.*?)\s*```", reply, re.DOTALL)
     if not match:
         logger.warning("PMAgent: no JSON block found in reply")
-        return
+        return False, "No JSON block found. Please wrap your output in ```json ... ```"
 
     try:
         data = json.loads(match.group(1))
@@ -103,11 +105,15 @@ def _parse_and_persist(reply: str, state: TaskState) -> None:
         for raw in data.get("subtasks", []):
             subtasks.append(
                 SubTask(
-                    title=raw["title"],
-                    description=raw["description"],
-                    file_path=raw["file_path"],
+                    title=raw.get("title", ""),
+                    description=raw.get("description", ""),
+                    file_path=raw.get("file_path", ""),
                 )
             )
+        
+        if not subtasks:
+            return False, "No subtasks were generated. You must create at least one subtask."
+            
         state.subtasks = subtasks
         state.set_status(TaskStatus.ARCHITECTING)
 
@@ -116,6 +122,8 @@ def _parse_and_persist(reply: str, state: TaskState) -> None:
             f"{len(state.subtasks)} subtasks"
         )
         state.add_message("PMAgent", f"✅ {len(state.subtasks)} subtasks created")
+        return True, ""
     except Exception as e:
         logger.error(f"PMAgent JSON parse error: {e}\nRaw: {match.group(1)[:500]}")
         state.errors.append(f"PM parse error: {e}")
+        return False, f"JSON parsing error: {e}"

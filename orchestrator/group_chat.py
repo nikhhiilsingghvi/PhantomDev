@@ -154,7 +154,7 @@ def is_termination_msg(msg: dict) -> bool:
     )
 
 
-# Fixed agent execution order — no LLM decides who speaks next.
+# Fixed agent execution order — baseline flow.
 AGENT_ORDER = [
     "PMAgent",
     "ArchitectAgent",
@@ -166,19 +166,6 @@ AGENT_ORDER = [
     "WriterAgent",
     "PRAgent",
 ]
-
-
-def custom_speaker_selection(last_speaker, groupchat):
-    agents_by_name = {a.name: a for a in groupchat.agents}
-    if last_speaker.name not in AGENT_ORDER:
-        # HumanProxy or unknown — start from the beginning
-        return agents_by_name.get("PMAgent", groupchat.agents[0])
-    idx = AGENT_ORDER.index(last_speaker.name)
-    if idx >= len(AGENT_ORDER) - 1:
-        # PRAgent already spoke — keep it as last speaker, GroupChat will terminate
-        return agents_by_name.get("PRAgent", groupchat.agents[-1])
-    next_name = AGENT_ORDER[idx + 1]
-    return agents_by_name.get(next_name, groupchat.agents[0])
 
 
 def _save_state_sync(state: TaskState) -> None:
@@ -212,6 +199,7 @@ class PhantomDevOrchestrator:
     def __init__(self, on_update: Callable | None = None):
         self._on_update_cb = on_update
         self.llm_config = get_llm_config()
+        self.loop_counts = {"qa": 0, "security": 0, "validation": 0}
 
     def _fire_update(self, state: TaskState) -> None:
         """
@@ -278,11 +266,52 @@ class PhantomDevOrchestrator:
                 max_consecutive_auto_reply=0,
             )
 
+            def dynamic_speaker_selection(last_speaker, groupchat):
+                agents_by_name = {a.name: a for a in groupchat.agents}
+                last_msg = groupchat.messages[-1]["content"] if groupchat.messages else ""
+                
+                # 1. Validation Self-Correction
+                if "VALIDATION_FAILED:" in last_msg:
+                    self.loop_counts["validation"] += 1
+                    if self.loop_counts["validation"] <= 3:
+                        return last_speaker
+                    else:
+                        state.fail("Max validation retries exceeded. Aborting pipeline.")
+                        return agents_by_name.get("PRAgent", groupchat.agents[-1])
+                        
+                # 2. QA Feedback Loop
+                if last_speaker.name == "QAAgent" and "QAAgent BLOCKED" in last_msg:
+                    self.loop_counts["qa"] += 1
+                    if self.loop_counts["qa"] <= 2:
+                        return agents_by_name.get("EngineerAgent_0")
+                    else:
+                        state.fail("Max QA fix retries exceeded. Proceeding blocked.")
+                        return agents_by_name.get("SecurityAgent", groupchat.agents[-1])
+                        
+                # 3. Security Feedback Loop
+                if last_speaker.name == "SecurityAgent" and "SecurityAgent BLOCKED" in last_msg:
+                    self.loop_counts["security"] += 1
+                    if self.loop_counts["security"] <= 2:
+                        return agents_by_name.get("EngineerAgent_0")
+                    else:
+                        state.fail("Max Security fix retries exceeded. Proceeding blocked.")
+                        return agents_by_name.get("WriterAgent", groupchat.agents[-1])
+
+                if last_speaker.name not in AGENT_ORDER:
+                    return agents_by_name.get("PMAgent", groupchat.agents[0])
+                    
+                idx = AGENT_ORDER.index(last_speaker.name)
+                if idx >= len(AGENT_ORDER) - 1:
+                    return agents_by_name.get("PRAgent", groupchat.agents[-1])
+                
+                next_name = AGENT_ORDER[idx + 1]
+                return agents_by_name.get(next_name, groupchat.agents[0])
+
             groupchat = GroupChat(
                 agents=[user_proxy] + all_agents,
                 messages=[],
                 max_round=int(os.getenv("MAX_ROUNDS", 80)),
-                speaker_selection_method=custom_speaker_selection,
+                speaker_selection_method=dynamic_speaker_selection,
                 allow_repeat_speaker=True,
             )
 

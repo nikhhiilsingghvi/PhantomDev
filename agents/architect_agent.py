@@ -65,24 +65,30 @@ def build_architect_agent(llm_config: dict, state: TaskState) -> PhantomBaseAgen
         if reply:
             text = normalize_content(reply)
             if text.strip():
-                _parse_and_persist(text, state)
+                success, err = _parse_and_persist(text, state)
+                if not success:
+                    return f"VALIDATION_FAILED: {err}\nPlease fix your response and try again."
         return reply
 
     agent.generate_reply = generate_with_persistence
     return agent
 
 
-def _parse_and_persist(reply: str, state: TaskState) -> None:
+def _parse_and_persist(reply: str, state: TaskState) -> tuple[bool, str]:
     """Extract architecture notes and tech decisions from architect reply."""
     # Pull architecture notes
     arch_match = re.search(r"## Architecture Notes\s*(.*?)(?=##|$)", reply, re.DOTALL)
     if arch_match:
         state.architecture_notes = arch_match.group(1).strip()
+    else:
+        return False, "Missing '## Architecture Notes' section."
 
     # Pull API contracts
     api_match = re.search(r"## API Contracts\s*(.*?)(?=##|$)", reply, re.DOTALL)
     if api_match:
         state.api_contracts = api_match.group(1).strip()
+    else:
+        return False, "Missing '## API Contracts' section."
 
     # Pull tech decisions
     td_match = re.search(
@@ -95,6 +101,8 @@ def _parse_and_persist(reply: str, state: TaskState) -> None:
             if line:
                 decisions.append(line)
         state.tech_decisions = decisions
+    else:
+        return False, "Missing '## Tech Decisions' section."
 
     state.set_status(TaskStatus.CODING)
     state.add_message(
@@ -102,3 +110,4 @@ def _parse_and_persist(reply: str, state: TaskState) -> None:
         f"✅ Architecture defined: {len(state.tech_decisions)} decisions",
     )
     logger.info(f"ArchitectAgent persisted: {len(state.tech_decisions)} tech decisions")
+    return True, ""

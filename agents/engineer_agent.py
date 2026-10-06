@@ -73,6 +73,9 @@ file_path: <path>
 After writing files, say:
 "EngineerAgent_{idx} done with subtask <id>. Next engineer please proceed."
 
+If QA or Security has reported a failure, your job is to FIX the bugs. 
+Read the test results or security findings from the chat history, then output the corrected code blocks using the same format.
+
 Coding standards:
 1. Write COMPLETE files — never use placeholders like "# TODO" or "# implement later"
 2. Add proper docstrings to every function and class
@@ -138,7 +141,9 @@ def build_engineer_agents(
                         else (_extract_text_local(reply))
                     )
                     if text.strip():
-                        _parse_and_persist(text, state, _idx)
+                        success, err = _parse_and_persist(text, state, _idx)
+                        if not success:
+                            return f"VALIDATION_FAILED: {err}\nPlease fix your response and try again."
                 return reply
 
             return generate_with_persistence
@@ -194,10 +199,16 @@ def _safe_list_files() -> str:
     return list_workspace_files()
 
 
-def _parse_and_persist(reply: str, state: TaskState, agent_idx: int) -> None:
+def _parse_and_persist(reply: str, state: TaskState, agent_idx: int) -> tuple[bool, str]:
     """Parse engineer reply and save code blocks to workspace."""
+    pending = [s for s in state.subtasks if s.status == "pending"]
+    
     # Find all code blocks
     code_blocks = re.findall(r"```python\s*\n# ([\w/._-]+)\n(.*?)```", reply, re.DOTALL)
+
+    if not code_blocks and pending:
+        if "done" not in reply.lower():
+            return False, "You must output at least one code block using the format ```python\n# file_path\n<code>\n```"
 
     for file_path, code in code_blocks:
         file_path = file_path.strip()
@@ -209,6 +220,8 @@ def _parse_and_persist(reply: str, state: TaskState, agent_idx: int) -> None:
             )
 
     # Update status if all subtasks done
-    pending = [s for s in state.subtasks if s.status == "pending"]
-    if not pending:
+    pending_after = [s for s in state.subtasks if s.status == "pending"]
+    if not pending_after:
         state.set_status(TaskStatus.TESTING)
+
+    return True, ""
