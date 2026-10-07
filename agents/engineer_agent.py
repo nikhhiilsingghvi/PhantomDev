@@ -199,16 +199,21 @@ def _safe_list_files() -> str:
     return list_workspace_files()
 
 
-def _parse_and_persist(reply: str, state: TaskState, agent_idx: int) -> tuple[bool, str]:
+def _parse_and_persist(
+    reply: str, state: TaskState, agent_idx: int
+) -> tuple[bool, str]:
     """Parse engineer reply and save code blocks to workspace."""
     pending = [s for s in state.subtasks if s.status == "pending"]
-    
+
     # Find all code blocks
     code_blocks = re.findall(r"```python\s*\n# ([\w/._-]+)\n(.*?)```", reply, re.DOTALL)
 
     if not code_blocks and pending:
         if "done" not in reply.lower():
-            return False, "You must output at least one code block using the format ```python\n# file_path\n<code>\n```"
+            return (
+                False,
+                "You must output at least one code block using the format ```python\n# file_path\n<code>\n```",
+            )
 
     for file_path, code in code_blocks:
         file_path = file_path.strip()

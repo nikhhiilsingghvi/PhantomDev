@@ -110,10 +110,13 @@ def _parse_and_persist(reply: str, state: TaskState) -> tuple[bool, str]:
                     file_path=raw.get("file_path", ""),
                 )
             )
-        
+
         if not subtasks:
-            return False, "No subtasks were generated. You must create at least one subtask."
-            
+            return (
+                False,
+                "No subtasks were generated. You must create at least one subtask.",
+            )
+
         state.subtasks = subtasks
         state.set_status(TaskStatus.ARCHITECTING)
 

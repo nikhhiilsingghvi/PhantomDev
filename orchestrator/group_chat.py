@@ -268,17 +268,21 @@ class PhantomDevOrchestrator:
 
             def dynamic_speaker_selection(last_speaker, groupchat):
                 agents_by_name = {a.name: a for a in groupchat.agents}
-                last_msg = groupchat.messages[-1]["content"] if groupchat.messages else ""
-                
+                last_msg = (
+                    groupchat.messages[-1]["content"] if groupchat.messages else ""
+                )
+
                 # 1. Validation Self-Correction
                 if "VALIDATION_FAILED:" in last_msg:
                     self.loop_counts["validation"] += 1
                     if self.loop_counts["validation"] <= 3:
                         return last_speaker
                     else:
-                        state.fail("Max validation retries exceeded. Aborting pipeline.")
+                        state.fail(
+                            "Max validation retries exceeded. Aborting pipeline."
+                        )
                         return agents_by_name.get("PRAgent", groupchat.agents[-1])
-                        
+
                 # 2. QA Feedback Loop
                 if last_speaker.name == "QAAgent" and "QAAgent BLOCKED" in last_msg:
                     self.loop_counts["qa"] += 1
@@ -287,23 +291,28 @@ class PhantomDevOrchestrator:
                     else:
                         state.fail("Max QA fix retries exceeded. Proceeding blocked.")
                         return agents_by_name.get("SecurityAgent", groupchat.agents[-1])
-                        
+
                 # 3. Security Feedback Loop
-                if last_speaker.name == "SecurityAgent" and "SecurityAgent BLOCKED" in last_msg:
+                if (
+                    last_speaker.name == "SecurityAgent"
+                    and "SecurityAgent BLOCKED" in last_msg
+                ):
                     self.loop_counts["security"] += 1
                     if self.loop_counts["security"] <= 2:
                         return agents_by_name.get("EngineerAgent_0")
                     else:
-                        state.fail("Max Security fix retries exceeded. Proceeding blocked.")
+                        state.fail(
+                            "Max Security fix retries exceeded. Proceeding blocked."
+                        )
                         return agents_by_name.get("WriterAgent", groupchat.agents[-1])
 
                 if last_speaker.name not in AGENT_ORDER:
                     return agents_by_name.get("PMAgent", groupchat.agents[0])
-                    
+
                 idx = AGENT_ORDER.index(last_speaker.name)
                 if idx >= len(AGENT_ORDER) - 1:
                     return agents_by_name.get("PRAgent", groupchat.agents[-1])
-                
+
                 next_name = AGENT_ORDER[idx + 1]
                 return agents_by_name.get(next_name, groupchat.agents[0])
 
